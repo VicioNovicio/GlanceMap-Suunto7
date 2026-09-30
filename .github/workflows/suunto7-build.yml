@@ -32,7 +32,9 @@ jobs:
           packages: platform-tools
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-37" "build-tools;37.0.0" --channel=3
+        run: |
+          sdkmanager --list --channel=3 | grep -E "platforms;android-37|build-tools;37" || true
+          sdkmanager "platforms;android-37.0" "build-tools;37.0.0" --channel=3
 
       - name: Make Gradle executable
         run: chmod +x gradlew
