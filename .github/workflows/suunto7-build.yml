@@ -39,12 +39,12 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x gradlew
 
-      - name: Build Wear OS debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace
+      - name: Build optimized Wear OS APK
+        run: ./gradlew :app:assembleBenchmark --stacktrace
 
       - name: Upload Suunto 7 APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: GlanceMap-Suunto7-API28
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: GlanceMap-Suunto7-API28-Optimized
+          path: app/build/outputs/apk/benchmark/app-benchmark.apk
