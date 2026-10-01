@@ -39,12 +39,43 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x gradlew
 
-      - name: Build optimized Wear OS APK
-        run: ./gradlew :app:assembleBenchmark --stacktrace
+      - name: Restore release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/GlanceMap-Suunto7-release.p12"
 
-      - name: Upload Suunto 7 APK
+      - name: Build signed Suunto 7 and Companion APKs
+        env:
+          RELEASE_STORE_FILE: ${{ runner.temp }}/GlanceMap-Suunto7-release.p12
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          ./gradlew :app:assembleBenchmark :glancemapcompanionapp:assembleBenchmark --stacktrace
+
+      - name: Prepare v1 APKs
+        run: |
+          mkdir -p release-artifacts
+          WEAR_APK=$(find app/build/outputs/apk/benchmark -maxdepth 1 -name "*.apk" | head -1)
+          PHONE_APK=$(find glancemapcompanionapp/build/outputs/apk/benchmark -maxdepth 1 -name "*.apk" | head -1)
+          cp "$WEAR_APK" release-artifacts/GlanceMap-Suunto7-v1.apk
+          cp "$PHONE_APK" release-artifacts/GlanceMap-Companion-v1.apk
+
+      - name: Verify matching signatures
+        run: |
+          WEAR_SHA=$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs release-artifacts/GlanceMap-Suunto7-v1.apk | sed -n 's/.*SHA-256 digest: //p' | head -1)
+          PHONE_SHA=$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs release-artifacts/GlanceMap-Companion-v1.apk | sed -n 's/.*SHA-256 digest: //p' | head -1)
+
+          echo "Wear SHA-256: $WEAR_SHA"
+          echo "Companion SHA-256: $PHONE_SHA"
+
+          test -n "$WEAR_SHA"
+          test "$WEAR_SHA" = "$PHONE_SHA"
+
+      - name: Upload GlanceMap Suunto 7 v1
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: GlanceMap-Suunto7-API28-Optimized
-          path: app/build/outputs/apk/benchmark/app-benchmark.apk
+          name: GlanceMap-Suunto7-v1
+          path: release-artifacts/*.apk
