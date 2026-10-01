@@ -45,33 +45,68 @@ jobs:
         run: |
           printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/GlanceMap-Suunto7-release.p12"
 
-      - name: Build signed Suunto 7 and Companion APKs
+      - name: Build Suunto 7 debug, benchmark and Companion
         env:
           RELEASE_STORE_FILE: ${{ runner.temp }}/GlanceMap-Suunto7-release.p12
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
-          ./gradlew :app:assembleBenchmark :glancemapcompanionapp:assembleBenchmark --stacktrace
+          ./gradlew \
+            :app:assembleDebug \
+            :app:assembleBenchmark \
+            :glancemapcompanionapp:assembleBenchmark \
+            --stacktrace
 
-      - name: Prepare v1 APKs
+      - name: Prepare signed APKs
+        env:
+          RELEASE_STORE_FILE: ${{ runner.temp }}/GlanceMap-Suunto7-release.p12
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
           mkdir -p release-artifacts
-          WEAR_APK=$(find app/build/outputs/apk/benchmark -maxdepth 1 -name "*.apk" | head -1)
+
+          DEBUG_APK=$(find app/build/outputs/apk/debug -maxdepth 1 -name "*.apk" | head -1)
+          BENCHMARK_APK=$(find app/build/outputs/apk/benchmark -maxdepth 1 -name "*.apk" | head -1)
           PHONE_APK=$(find glancemapcompanionapp/build/outputs/apk/benchmark -maxdepth 1 -name "*.apk" | head -1)
-          cp "$WEAR_APK" release-artifacts/GlanceMap-Suunto7-v1.apk
+
+          test -n "$DEBUG_APK"
+          test -n "$BENCHMARK_APK"
+          test -n "$PHONE_APK"
+
+          cp "$BENCHMARK_APK" release-artifacts/GlanceMap-Suunto7-v1-benchmark.apk
           cp "$PHONE_APK" release-artifacts/GlanceMap-Companion-v1.apk
 
-      - name: Verify matching signatures
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" sign \
+            --ks "$RELEASE_STORE_FILE" \
+            --ks-type PKCS12 \
+            --ks-key-alias "$RELEASE_KEY_ALIAS" \
+            --ks-pass env:RELEASE_STORE_PASSWORD \
+            --key-pass env:RELEASE_KEY_PASSWORD \
+            --out release-artifacts/GlanceMap-Suunto7-v1-debug.apk \
+            "$DEBUG_APK"
+
+      - name: Verify APK signatures
         run: |
-          WEAR_SHA=$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs release-artifacts/GlanceMap-Suunto7-v1.apk | sed -n 's/.*SHA-256 digest: //p' | head -1)
+          DEBUG_SHA=$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs release-artifacts/GlanceMap-Suunto7-v1-debug.apk | sed -n 's/.*SHA-256 digest: //p' | head -1)
+
+          BENCHMARK_SHA=$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs release-artifacts/GlanceMap-Suunto7-v1-benchmark.apk | sed -n 's/.*SHA-256 digest: //p' | head -1)
+
           PHONE_SHA=$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs release-artifacts/GlanceMap-Companion-v1.apk | sed -n 's/.*SHA-256 digest: //p' | head -1)
 
-          echo "Wear SHA-256: $WEAR_SHA"
+          echo "Debug SHA-256:     $DEBUG_SHA"
+          echo "Benchmark SHA-256: $BENCHMARK_SHA"
           echo "Companion SHA-256: $PHONE_SHA"
 
-          test -n "$WEAR_SHA"
-          test "$WEAR_SHA" = "$PHONE_SHA"
+          test -n "$DEBUG_SHA"
+          test -n "$BENCHMARK_SHA"
+          test -n "$PHONE_SHA"
+
+          test "$DEBUG_SHA" = "$BENCHMARK_SHA"
+          test "$DEBUG_SHA" = "$PHONE_SHA"
+
+          echo "All APK signatures match."
 
       - name: Upload GlanceMap Suunto 7 v1
         if: success()
