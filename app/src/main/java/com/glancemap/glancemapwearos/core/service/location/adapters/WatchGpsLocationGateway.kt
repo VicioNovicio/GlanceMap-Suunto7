@@ -5,7 +5,10 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Bundle
+import android.os.Build
 import android.os.CancellationSignal
+import android.os.Looper
 import android.os.SystemClock
 import com.glancemap.glancemapwearos.core.service.location.policy.LocationSourceMode
 import com.glancemap.glancemapwearos.core.service.location.telemetry.LocationServiceTelemetry
@@ -58,22 +61,64 @@ internal class WatchGpsLocationGateway(
             return cachedLocation
         }
 
-        val currentLocation =
-            withTimeoutOrNull(request.durationMs.coerceAtLeast(1L)) {
-                suspendCancellableCoroutine { continuation ->
-                    val cancellationSignal = CancellationSignal()
-                    continuation.invokeOnCancellation { cancellationSignal.cancel() }
-                    locationManager.getCurrentLocation(
-                        LocationManager.GPS_PROVIDER,
-                        cancellationSignal,
-                        callbackExecutor,
-                    ) { location ->
+      val currentLocation =
+    withTimeoutOrNull(request.durationMs.coerceAtLeast(1L)) {
+        suspendCancellableCoroutine { continuation ->
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val cancellationSignal = CancellationSignal()
+
+                continuation.invokeOnCancellation {
+                    cancellationSignal.cancel()
+                }
+
+                locationManager.getCurrentLocation(
+                    LocationManager.GPS_PROVIDER,
+                    cancellationSignal,
+                    callbackExecutor,
+                ) { location ->
+                    if (continuation.isActive) {
+                        continuation.resume(location)
+                    }
+                }
+
+            } else {
+                val legacyListener = object : LocationListener {
+
+                    override fun onLocationChanged(location: Location) {
+                        locationManager.removeUpdates(this)
+
                         if (continuation.isActive) {
                             continuation.resume(location)
                         }
                     }
+
+                    override fun onProviderEnabled(provider: String) = Unit
+
+                    override fun onProviderDisabled(provider: String) = Unit
+
+                    override fun onStatusChanged(
+                        provider: String?,
+                        status: Int,
+                        extras: Bundle?,
+                    ) = Unit
                 }
+
+                continuation.invokeOnCancellation {
+                    runCatching {
+                        locationManager.removeUpdates(legacyListener)
+                    }
+                }
+
+                @Suppress("DEPRECATION")
+                locationManager.requestSingleUpdate(
+                    LocationManager.GPS_PROVIDER,
+                    legacyListener,
+                    Looper.getMainLooper(),
+                )
             }
+        }
+    }
         telemetry.logWatchGpsCurrentLocationResult(
             durationMs = (SystemClock.elapsedRealtime() - nowElapsedMs).coerceAtLeast(0L),
             returnedLocation = currentLocation != null,
@@ -110,13 +155,23 @@ internal class WatchGpsLocationGateway(
                 if (isNewListener) {
                     startRawCallbackTelemetrySession()
                 }
-                locationManager.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,
-                    request.intervalMs,
-                    request.minDistanceMeters,
-                    callbackExecutor,
-                    listener,
-                )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+    locationManager.requestLocationUpdates(
+        LocationManager.GPS_PROVIDER,
+        request.intervalMs,
+        request.minDistanceMeters,
+        callbackExecutor,
+        listener,
+    )
+} else {
+    locationManager.requestLocationUpdates(
+        LocationManager.GPS_PROVIDER,
+        request.intervalMs,
+        request.minDistanceMeters,
+        listener,
+        Looper.getMainLooper(),
+    )
+                }
                 synchronized(activeListeners) {
                     activeListeners += listener
                 }
