@@ -130,7 +130,7 @@ android {
         signingConfigs.getByName("debug")
     }
             matchingFallbacks += listOf("release")
-            isDebuggable = false
+            isDebuggable = true
         }
     }
 
